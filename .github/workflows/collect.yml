@@ -1,0 +1,60 @@
+name: 毎日のデータ収集
+
+on:
+  # 毎朝 6:00(日本時間)= 前日の 21:00(世界標準時)
+  schedule:
+    - cron: "0 21 * * *"
+  # 手動でも実行できる(Actions の画面の「Run workflow」ボタン)
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "集める日付(例: 20261026)。空欄なら昨日"
+        required: false
+        default: ""
+
+# 集めたCSVをリポジトリに保存(コミット)するための権限
+permissions:
+  contents: write
+
+# 同時に2つ動かないようにする
+concurrency:
+  group: collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: リポジトリを取り出す
+        uses: actions/checkout@v4
+
+      - name: Python を準備する
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 解凍の道具(lhasa)とライブラリを入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lhasa
+          pip install -r requirements.txt
+
+      - name: データを集める
+        env:
+          INPUT_DATE: ${{ github.event.inputs.date }}
+        run: python collect.py
+
+      - name: 集めたCSVをリポジトリに保存する
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "新しく保存するデータはありません"
+          else
+            git commit -m "データ追加(自動収集)"
+            git pull --rebase
+            git push
+          fi
