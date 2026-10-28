@@ -1,0 +1,64 @@
+name: 過去分の直前情報の収集
+
+on:
+  # 毎日 18:30(日本時間)= 09:30(世界標準時)。毎朝 6:00 の収集とは時間をずらしている
+  schedule:
+    - cron: "30 9 * * *"
+  # 手動でも実行できる(Actions の画面の「Run workflow」ボタン)
+  workflow_dispatch:
+    inputs:
+      days:
+        description: "今回取る日数(空欄なら 5 日)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+# 毎朝の収集(collect)とは別のグループなので、お互いに待ったり止めたりしない
+concurrency:
+  group: beforeinfo
+  cancel-in-progress: false
+
+jobs:
+  beforeinfo:
+    runs-on: ubuntu-latest
+    timeout-minutes: 175
+
+    steps:
+      - name: リポジトリを取り出す
+        uses: actions/checkout@v4
+
+      - name: Python を準備する
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 解凍の道具(lhasa)とライブラリを入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lhasa
+          pip install -r requirements.txt
+
+      - name: 直前情報を集める
+        run: python collect_beforeinfo.py ${{ github.event.inputs.days }}
+
+      # 途中で失敗しても、それまでに取れた日の分は保存する
+      - name: 集めたCSVをリポジトリに保存する
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/beforeinfo
+          if git diff --cached --quiet; then
+            echo "新しく保存するデータはありません"
+            exit 0
+          fi
+          git commit -m "直前情報 追加(過去分の自動収集)"
+          # 毎朝の収集と保存が重なっても大丈夫なように、最大5回までやり直す
+          for i in 1 2 3 4 5; do
+            git pull --rebase && git push && exit 0
+            echo "保存をやり直します($i 回目)"
+            sleep 15
+          done
+          exit 1
