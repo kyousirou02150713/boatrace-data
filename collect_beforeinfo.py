@@ -2,7 +2,9 @@
 """
 過去分の直前情報(展示タイムなど)を集めるプログラム(GitHub Actions 用・箱2)
 
-・2026年4月24日〜2026年10月20日の範囲を、新しい日から古い日に向かって取る
+・取る順番:
+    (1) まず 2026年10月21日〜昨日(日本時間)の分を、新しい日から順に取る
+    (2) (1)が全部終わったら、2026年10月20日〜4月24日へ、新しい日から古い日に向かって取る
 ・すでに data/beforeinfo/beforeinfo_日付.csv がある日は飛ばす
 ・1回の実行で、最大 MAX_DAYS 日分まで(時間の上限 MAX_MINUTES を過ぎたら、次の日には進まない)
 ・アクセス間隔 3 秒 / 1 回の待ち時間 30 秒 / だめなら最大 3 回まで取り直す
@@ -31,8 +33,9 @@ import pandas as pd
 from bs4 import BeautifulSoup
 
 # ===== 設定 =====
-START_DATE = "20260424"      # 取る範囲の一番古い日
-END_DATE = "20261020"        # 取る範囲の一番新しい日
+START_DATE = "20260424"      # 過去分の一番古い日
+END_DATE = "20261020"        # 過去分の一番新しい日
+RECENT_START = "20261021"    # この日から「昨日」までは、過去分より先に取る
 MAX_DAYS = 5                 # 1回の実行で取る最大の日数
 MAX_MINUTES = 140            # この時間を過ぎたら、次の日には進まない(Actions の上限 180 分より前に終える)
 FAIL_RATE_LIMIT = 0.10       # 通信エラーで取れなかったレースがこの割合を超えた日は保存しない(次回取り直す)
@@ -150,7 +153,7 @@ def get_beforeinfo(date, jcd, rno):
 
         link = tb.select_one('a[href*="toban="]')
         toban = re.search(r"toban=(\d{4})", link["href"]).group(1) if link else None
-        name = link.get_text(strip=True).replace("　", " ") if link else None
+        name = link.get_text(strip=True).replace("\u3000", " ") if link else None
 
         w_idx = next((i for i, t in enumerate(texts) if "kg" in t), None)
 
@@ -277,19 +280,33 @@ def main():
         sys.exit(1)
     os.makedirs(OUT_DIR, exist_ok=True)
 
-    # 新しい日から古い日へ。保存済みの日は飛ばす
-    d = datetime.strptime(END_DATE, "%Y%m%d")
-    start = datetime.strptime(START_DATE, "%Y%m%d")
-    todo = []
-    while d >= start:
-        ds = d.strftime("%Y%m%d")
-        if not os.path.exists(os.path.join(OUT_DIR, f"beforeinfo_{ds}.csv")):
-            todo.append(ds)
-        d -= timedelta(days=1)
+    def missing_days(newest, oldest):
+        """newest から oldest へ、新しい日から順に、まだ保存していない日を並べる"""
+        d = datetime.strptime(newest, "%Y%m%d")
+        stop = datetime.strptime(oldest, "%Y%m%d")
+        days, total = [], 0
+        while d >= stop:
+            ds = d.strftime("%Y%m%d")
+            total += 1
+            if not os.path.exists(os.path.join(OUT_DIR, f"beforeinfo_{ds}.csv")):
+                days.append(ds)
+            d -= timedelta(days=1)
+        return days, total
 
-    total_days = (datetime.strptime(END_DATE, "%Y%m%d") - start).days + 1
-    print(f"===== 過去分の直前情報 ({START_DATE}〜{END_DATE}) =====")
-    print(f"残り {len(todo)} / {total_days} 日 / 今回は最大 {max_days} 日分")
+    # (1) 10月21日〜昨日(日本時間)
+    yesterday = (datetime.now(ZoneInfo("Asia/Tokyo")) - timedelta(days=1)).strftime("%Y%m%d")
+    if yesterday >= RECENT_START:
+        recent, recent_total = missing_days(yesterday, RECENT_START)
+    else:
+        recent, recent_total = [], 0
+    # (2) 10月20日〜4月24日
+    past, past_total = missing_days(END_DATE, START_DATE)
+
+    todo = recent + past            # (1)を先に、そのあと(2)
+    print("===== 直前情報の収集 =====")
+    print(f"(1) {RECENT_START}〜{yesterday}: 残り {len(recent)} / {recent_total} 日")
+    print(f"(2) {START_DATE}〜{END_DATE}: 残り {len(past)} / {past_total} 日")
+    print(f"今回は最大 {max_days} 日分")
     if not todo:
         print("すべての日を取り終わっています。")
         return
