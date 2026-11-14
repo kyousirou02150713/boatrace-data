@@ -1,0 +1,54 @@
+name: 過去のデータ収集(箱6)
+
+on:
+  # 手動で実行する(Actions の画面の「Run workflow」ボタン)。毎日は動きません
+  workflow_dispatch:
+    inputs:
+      start:
+        description: "集める期間の最初の日(例: 20240424)。空欄なら 20240424"
+        required: false
+        default: "20240424"
+      end:
+        description: "集める期間の最後の日(例: 20260423)。空欄なら 20260423"
+        required: false
+        default: "20260423"
+
+# 集めたCSVをリポジトリに保存(コミット)するための権限
+permissions:
+  contents: write
+
+# 同時に2つ動かないようにする
+concurrency:
+  group: collect_hist
+  cancel-in-progress: false
+
+jobs:
+  collect_hist:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+
+    steps:
+      - name: リポジトリを取り出す
+        uses: actions/checkout@v4
+
+      - name: Python を準備する
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 解凍の道具(lhasa)とライブラリを入れる
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq lhasa
+          pip install -r requirements.txt
+
+      - name: 保存の準備
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: 過去のデータを集める(30日ごとに保存)
+        env:
+          INPUT_START: ${{ github.event.inputs.start }}
+          INPUT_END: ${{ github.event.inputs.end }}
+        run: python collect_hist.py
